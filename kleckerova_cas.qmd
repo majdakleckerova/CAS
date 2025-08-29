@@ -1,0 +1,272 @@
+---
+title: "Časové řady – Seminární práce"
+author: "Marie Kleckerová"
+format:
+  html:
+    toc: true
+    toc-location: right
+    toc-title: "Obsah"
+    toc-depth: 4
+    toc_float: true
+    self-contained: true
+editor: visual
+---
+
+# Analýza datasetu "Construction - monthly data"
+
+## KMA/CAS
+
+### Marie Kleckerová
+
+# i. Grafické zobrazení řady
+
+```{r}
+library(eurostat)
+library(dplyr)
+
+### Načtení dat
+k <- get_eurostat("ei_bsbu_m_r2", time_format = "date")
+
+
+rada <- k %>%
+  filter(indic == "BS-CEME-BAL",
+         s_adj == "NSA",
+         geo == "DE") %>%
+  arrange(TIME_PERIOD)
+
+
+### Převod na časovou řadu
+rada.ts <- ts(rada$values,
+              frequency = 12,
+              start = c(as.numeric(format(min(rada$TIME_PERIOD), "%Y")),
+                        as.numeric(format(min(rada$TIME_PERIOD), "%m"))))
+
+
+### Grafické zobrazení
+plot(rada.ts,
+     main = "Business climate balance (BS-CEME-BAL), Germany (NSA)",
+     ylab = "Balance", xlab = "Time")
+
+
+### Dekompozice
+#rada.dec <- decompose(rada.ts)
+#plot(rada.dec)
+```
+
+### STRUČNÝ KOMENTÁŘ
+
+Data pocházejí z databáze **Eurostat** (datová sada *ei_bsbu_m_r2*). Jedná se o **měsíční časovou řadu** indikátoru *Bussiness climate balance (BS-CEME-BAL)* pro **Německo**, bez sezónního očištění (NSA - not seasonally adjusted). Hodnoty vycházejí z podnikatelských průzkumů a představují rozdíl mezi procentem pozitivních a negativních odpovědí, tedy tzv. **balance statistic**. Data pokrývají období zhruba od konce 70. let do současnosti.
+
+#### Charakteristika časové řady
+
+1.  **Trend**: Dlouhodobě se řada pohybuje kolem nulové hodnoty, **bez jednoznačného rostoucího či klesajícího trendu**. Zřetelné jsou ale hospodářské cykly – např. propad na přelomu 80. a 90. let, výrazná recese v roce 2009 a pokles během pandemie v roce 2020.
+2.  **Sezónnost:** Zřetelná sezónní složka s periodou 12 měsíců, která odráží každoroční cykly v podnikatelské aktivitě.
+3.  **Cyklické výkyvy:** Kromě pravidelné sezónnosti se vyskytují střednědobé cykly související s expanzí a recesí hospodářství.
+4.  **Náhodná složka:** Krátkodobé, nepravidelné fluktuace způsobené specifickými událostmi (např. politické či globální šoky).
+
+## ii. Dekompozice
+
+### + Identifikace trendu pomocí vyhlazení řady (klouzavé průměry, exponenciální vyrovnání)
+
+```{r}
+### Dekompozice (aditivní)
+rada.dec <- decompose(rada.ts, type = "additive")
+plot(rada.dec)
+```
+
+#### VYHLAZENÍ ŘADY
+
+```{r}
+library(zoo)
+
+# Jednoduché klouzavé průměry
+kp3  <- rollmean(rada.ts, 3, fill=NA)
+kp6  <- rollmean(rada.ts, 6, fill=NA)
+kp12 <- rollmean(rada.ts, 12, fill=NA)
+
+plot(rada.ts, main="Klouzavé průměry")
+lines(kp3, col=2)
+lines(kp6, col=3)
+lines(kp12, col=4)
+legend("topright", legend=c("Původní řada","KP, délka = 3","KP, délka = 6","KP, délka = 12"), col=1:4, lty=1)
+
+
+rada.exp1 <- HoltWinters(rada.ts, beta = FALSE, gamma = FALSE)
+plot(rada.exp1)
+
+rada.exp2 <- HoltWinters(rada.ts, alpha = 0.05, beta = FALSE, gamma = FALSE)
+plot(rada.exp2)
+
+rada.exp3 <- HoltWinters(rada.ts, beta = FALSE, gamma = TRUE)
+plot(rada.exp3)
+
+rada.dec <- decompose(rada.ts, type="additive") 
+lines(rada.dec$trend, col="deeppink2", lwd=2)
+
+
+
+
+```
+
+```{r}
+# jednoduché exponenciální vyhlazení
+rada.exp <- HoltWinters(rada.ts, beta = FALSE, gamma = FALSE)
+plot(rada.exp, main="Jednoduché exponenciální vyhlazení")
+
+# predikce 12 měsíců dopředu
+rada.pred <- predict(rada.exp, n.ahead = 12)
+plot(rada.ts, main="Predikce Holt-Winters", ylab="Balance", xlab="Čas")
+lines(fitted(rada.exp)[,1], col="blue")  # vyhlazené hodnoty
+lines(time(rada.ts)[length(rada.ts)] + 1:12/12, rada.pred, col="red", lwd=2)  # predikce
+legend("topright", legend=c("Původní řada", "Vyhlazeno", "Predikce"),
+       col=c("black","blue","red"), lwd=c(1,1,2))
+
+rada.exp2 <- HoltWinters(rada.ts, alpha = 0.01, beta = FALSE, gamma = FALSE)
+rada.exp3 <- HoltWinters(rada.ts, alpha = 0.5,  beta = FALSE, gamma = FALSE)
+plot(rada.exp2); plot(rada.exp3)
+
+
+```{r}
+############################
+# Načtení knihoven
+############################
+library(eurostat)
+library(dplyr)
+library(zoo)
+library(forecast)
+
+############################
+# Načtení dat
+############################
+k <- get_eurostat("ei_bsbu_m_r2", time_format = "date")
+
+rada <- k %>%
+  filter(indic == "BS-CEME-BAL",
+         s_adj == "NSA",
+         geo == "DE") %>%
+  arrange(TIME_PERIOD)
+
+# Převod na časovou řadu
+rada.ts <- ts(rada$values,
+              frequency = 12,
+              start = c(as.numeric(format(min(rada$TIME_PERIOD), "%Y")),
+                        as.numeric(format(min(rada$TIME_PERIOD), "%m"))))
+
+############################
+# 1. Graf původní řady
+############################
+plot.ts(rada.ts, ylab="Balance", xlab="Time", main="Business climate balance (DE, NSA)", col=1, lwd=2)
+
+############################
+# 2. Dekompozice
+############################
+rada.dec <- decompose(rada.ts, type="additive")
+plot(rada.dec)
+
+trend.dec <- rada.dec$trend  # odhad trendu z dekompozice
+
+############################
+# 3. Klouzavé průměry
+############################
+# různé liché délky
+rada.rm3  <- rollmean(rada.ts, 3, fill=NA)
+rada.rm5  <- rollmean(rada.ts, 5, fill=NA)
+rada.rm7  <- rollmean(rada.ts, 7, fill=NA)
+rada.rm13 <- rollmean(rada.ts, 13, fill=NA)
+
+# graf pro vizuální volbu optimálního vyhlazení
+plot.ts(rada.ts, ylab="Balance", xlab="Time", main="Hledání optimálního klouzavého průměru", col=1, lwd=2)
+lines(rada.rm3, col=2, lwd=2)
+lines(rada.rm5, col=3, lwd=2)
+lines(rada.rm7, col=4, lwd=2)
+lines(rada.rm13, col=5, lwd=2)
+legend("topright", legend=c("původní", "RM3","RM5","RM7","RM13"), col=1:5, lwd=2)
+
+# vyber trendu (např. RM13 pro střednědobý trend)
+trend.rm <- rada.rm13
+
+############################
+# 4. Holt-Winters exponenciální vyhlazení
+############################
+# jednoduché exponenciální vyhlazení (bez lineárního trendu a sezóny)
+rada.exp1 <- HoltWinters(rada.ts, beta=FALSE, gamma=FALSE)       # automatický odhad alfa
+rada.exp2 <- HoltWinters(rada.ts, alpha=0.05, beta=FALSE, gamma=FALSE)
+rada.exp3 <- HoltWinters(rada.ts, alpha=0.2, beta=FALSE, gamma=FALSE)
+
+# SSE pro porovnání
+sse <- c(
+  rada.exp1$SSE,
+  rada.exp2$SSE,
+  rada.exp3$SSE
+)
+names(sse) <- c("auto", "alpha0.05", "alpha0.2")
+print(sse)  # nejmenší SSE = optimální vyhlazení
+
+# vykreslení exponenciálně vyhlazených trendů
+plot.ts(rada.ts, ylab="Balance", xlab="Time", main="Holt-Winters exponenciální vyhlazení", col=1, lwd=2)
+lines(fitted(rada.exp1)[,1], col=2, lwd=2)
+lines(fitted(rada.exp2)[,1], col=3, lwd=2)
+lines(fitted(rada.exp3)[,1], col=4, lwd=2)
+legend("topright", legend=c("původní", "HW auto", "HW alpha0.05","HW alpha0.2"),
+       col=1:4, lwd=2)
+
+# vyber optimálního trendu podle SSE a vizuální kontroly
+trend.hw <- fitted(rada.exp2)[,1]  # příklad
+
+```
+
+## iii) hledání optimálního modelu pro samotnou řadu (funkční zápis trendu + sezónnost)
+```{r}
+# Předpokládáme, že rada.ts je tvoje řada
+par(mfrow=c(2,1))
+acf(rada.ts, main="ACF BS-CEME-BAL")
+pacf(rada.ts, main="PACF BS-CEME-BAL")
+par(mfrow=c(1,1))
+
+fit.autoarima <- auto.arima(rada.ts, seasonal = FALSE)
+fit.autoarima
+plot(rada.ts)
+lines(fitted(fit.autoarima), col="deeppink2")
+
+# řada
+rada <- rada.ts
+
+# 5 kandidátních modelů
+fit1 <- arima(rada, order=c(2,1,1))  # podle auto.arima
+fit2 <- arima(rada, order=c(1,1,1))  # zkusit nižší AR
+fit3 <- arima(rada, order=c(2,1,0))  # bez MA
+fit4 <- arima(rada, order=c(1,1,0))  # jen AR
+fit5 <- arima(rada, order=c(3,1,1))  # vyšší AR pro porovnání
+
+# vypíše AIC/BIC všech modelů
+data.frame(
+  model = c("ARIMA(2,1,1)","ARIMA(1,1,1)","ARIMA(2,1,0)","ARIMA(1,1,0)","ARIMA(3,1,1)"),
+  AIC = c(AIC(fit1), AIC(fit2), AIC(fit3), AIC(fit4), AIC(fit5)),
+  BIC = c(BIC(fit1), BIC(fit2), BIC(fit3), BIC(fit4), BIC(fit5))
+)
+
+par(mfrow=c(2,1))
+acf(residuals(fit1), main="ACF residuals fit1")
+pacf(residuals(fit1), main="PACF residuals fit1")
+par(mfrow=c(1,1))
+
+Box.test(residuals(fit1), type="Ljung-Box")
+
+```
+
+# sezónní diferencování
+rada.diff <- diff(rada.ts, lag=12)
+plot(rada.diff)
+acf(rada.diff)
+pacf(rada.diff)
+
+library(forecast)
+
+# Automatický výběr modelu
+rada.arima <- auto.arima(rada.ts, seasonal=TRUE, stepwise=FALSE, approximation=FALSE)
+rada.arima
+checkresiduals(rada.arima)
+
+
+```
+
