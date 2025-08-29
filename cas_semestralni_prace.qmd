@@ -1,0 +1,189 @@
+---
+title: "Časové řady – Seminární práce"
+author: "Marie Kleckerová, Natálie Růtová, Jan Čmuchař"
+format:
+  html:
+    toc: true
+    toc-location: right
+    toc-title: "Obsah"
+    toc-depth: 4
+    toc_float: true
+    self-contained: true
+editor: visual
+---
+
+## Načtení knihoven a dat
+
+```{r}
+# Načtení knihoven
+library(eurostat)
+library(dplyr)
+library(TTR)       
+library(zoo)
+library(forecast)
+
+k <- get_eurostat("ei_bsbu_m_r2", time_format = "date")
+
+rada <- k %>%
+  filter(indic == "BS-CEME-BAL",
+         s_adj == "NSA",
+         geo == "DE") %>%
+  arrange(TIME_PERIOD)
+
+rada.ts <- ts(rada$values,
+              frequency = 12,
+              start = c(as.numeric(format(min(rada$TIME_PERIOD), "%Y")),
+                        as.numeric(format(min(rada$TIME_PERIOD), "%m"))))
+```
+
+## i. Grafické zobrazení řady + stručný komentář
+
+```{r}
+plot(rada.ts,
+     main = "Business climate balance (BS-CEME-BAL), Germany (NSA)",
+     ylab = "Balance", xlab = "Time")
+```
+
+Analyzujeme **měsíční** data ukazatele **Business climate balance (indikátor BS-CEME-BAL)** pro **Německo**, neupravená o sezónnost *(NSA)*. Jedná se o časovou řadu s **měsíční periodicitou** od konce 70. let do současnosti. Na grafu vidíme, že se hodnoty v průběhu času cyklicky mění – opakuje se pravidelný sezónní vzorec s periodou jednoho roku. Dlouhodobý trend není na první pohled úplně jasný, protože ho překrývají sezónní výkyvy... v 80. letech byly hodnoty spíše vyšší, kolem přelomu tisíciletí došlo k poklesu a následně ke zlepšení až do roku 2018, po roce 2020 je opět patrný pokles. Hodnoty se pohybují v rozmezí přibližně od **−80 do +20**. Pro přesnější určení trendu je ale potřeba použít metody vyhlazování a dekompozice. Řada tedy obsahuje jak **sezónní složku**, tak nejspíš i **dlouhodobý trend**.
+
+## ii. Dekompozice + identifikace trendu pomocí vyhlazení řady (klouzavé průměry či exponenciální vyrovnání)
+
+### Dekompozice
+
+```{r}
+### 1. Dekompozice časové řady
+rada.dec <- decompose(rada.ts, type = "additive")
+plot(rada.dec)
+```
+
+Z rozkladu řady je vidět pravidelná **sezónní složka**, která se opakuje každý rok a má podobnou velikost. **Trend** ukazuje pokles od konce 80. let do přelomu tisíciletí, pak zlepšení do roku 2018 a následně mírný pokles.
+
+### Vyhlazení pomocí klouzavých průměrů
+
+```{r}
+### 2. Klouzavé průměry 
+rada.rm5  <- rollmean(rada.ts, 5,  align = "center", na.pad = TRUE)
+rada.rm9  <- rollmean(rada.ts, 9,  align = "center", na.pad = TRUE)
+rada.rm13 <- rollmean(rada.ts, 13, align = "center", na.pad = TRUE)
+
+w12c       <- c(0.5, rep(1, 11), 0.5) / 12
+rada.rm12c <- stats::filter(rada.ts, filter = w12c, sides = 2)
+
+w5         <- c(1,2,4,2,1)/10
+rada.rm5w  <- zoo::rollapply(rada.ts, 5, function(z) stats::weighted.mean(z, w5),
+                             align = "center", fill = NA)
+
+plot(rada.ts, main = "Vyhlazení pomocí klouzavých průměrů",
+     ylab = "Balance", xlab = "Time")
+lines(rada.rm5,  col = 2, lwd = 2)
+lines(rada.rm9,  col = 3, lwd = 2)
+lines(rada.rm13, col = 4, lwd = 2)
+lines(rada.rm12c, col = 6, lwd = 2)
+lines(rada.rm5w, col = 7, lwd = 2, lty = 2)
+legend("topright",
+       legend = c("Originál","RM(5)","RM(9)","RM(13)",
+                  "2×12 RM (centrovaný)","Vážený RM(5)"),
+       col = c(1,2,3,4,6,7), lty = c(1,1,1,1,1,2),
+       lwd = 2, cex = 0.8)
+```
+
+-   Krátké průměry **RM(5) a RM(9)** stále **kopírují sezónní výkyvy** a trend není moc výrazný.
+
+-   U delších průměrů (**RM(13)** a zejména **2×12 RM**) je **sezónnost potlačena** a dobře vystupuje **dlouhodobý trend** – pokles do roku 2000, následný růst až do roku 2018 a poté opět zhoršení.
+
+-   **Vážený RM(5)** dává podobný průběh jako obyčejný RM(5), jen je **o něco hladší**.
+
+### Vyhlazení pomocí exponenciálního vyrovnání
+
+```{r}
+rada.sa.exp     <- HoltWinters(rada.sa, gamma = FALSE) # základní dvojité exponenciální vyrovnání (HW bez sezónní složky)
+# různé hodnoty parametrů alpha a beta
+rada.sa.exp.a01 <- HoltWinters(rada.sa, alpha = 0.01, beta = FALSE, gamma = FALSE)
+rada.sa.exp.a05 <- HoltWinters(rada.sa, alpha = 0.05, beta = FALSE, gamma = FALSE)
+rada.sa.exp2    <- HoltWinters(rada.sa, alpha = 0.1,  beta = 0.05,  gamma = FALSE)
+rada.sa.exp3    <- HoltWinters(rada.sa, alpha = 0.3,  beta = 0.1,   gamma = FALSE)
+
+rada.hw.add     <- HoltWinters(rada.ts, seasonal = "additive")
+
+oldpar <- par(no.readonly = TRUE)
+par(mfrow = c(2,3), mar = c(3,3,2,1))
+
+plot(rada.sa.exp,     main = "SA: auto (HW)")
+plot(rada.sa.exp.a01, main = "SA: α=0.01, β=FALSE")
+plot(rada.sa.exp.a05, main = "SA: α=0.05, β=FALSE")
+plot(rada.sa.exp2,    main = "SA: α=0.1,  β=0.05")
+plot(rada.sa.exp3,    main = "SA: α=0.3,  β=0.1")
+plot(rada.hw.add,     main = "Full series: HW additive")
+
+par(oldpar)
+
+SSE.tab <- data.frame(
+  model = c("SA auto",
+            "SA alpha=0.01, beta=FALSE",
+            "SA alpha=0.05, beta=FALSE",
+            "SA alpha=0.1, beta=0.05",
+            "SA alpha=0.3, beta=0.1",
+            "HW additive (full series)"),
+  SSE   = c(rada.sa.exp$SSE,
+            rada.sa.exp.a01$SSE,
+            rada.sa.exp.a05$SSE,
+            rada.sa.exp2$SSE,
+            rada.sa.exp3$SSE,
+            rada.hw.add$SSE)
+)
+
+SSE.tab <- SSE.tab[order(SSE.tab$SSE), ]
+print(SSE.tab, row.names = FALSE)
+
+```
+
+Pro odhad trendu byly použity různé varianty **Holt–Wintersova exponenciálního vyhlazení**. Nejprve jsme metodu aplikovali na **sezónně očištěnou řadu**, a to jak s automaticky odhadnutými parametry, tak s pevně zvolenými hodnotami α a β. Ukázalo se, že při velmi malém α je křivka příliš hladká a reaguje pomalu, zatímco při větších α a β model kopíruje i krátkodobé výkyvy. Nejlepších výsledků dosáhl **automatický model na SA řadě (SSE ≈ 10 600)**. Pro srovnání jsme dále použili **HW na původní sezónní řadě (aditivní varianta)**, který měl také poměrně dobrou chybu (SSE ≈ 14 000). Celkově lze říci, že **nejvhodnější je automatický HW na sezónně očištěné řadě**, i když aplikace na původní řadě potvrzuje podobný tvar trendu a funkčnost metody.
+
+## iii. Hledání optimálního modelu pro samotnou řadu (funkční zápis trendu + sezónnost)
+
+```{r}
+t <- as.numeric(time(rada.ts))   # skutečná časová osa z ts
+y <- as.numeric(rada.ts)         # hodnoty řady
+
+### Fit trendů (jen v závislosti na t)
+mod_lin <- lm(y ~ t)
+mod_kv  <- lm(y ~ t + I(t^2))
+mod_kub <- lm(y ~ t + I(t^2) + I(t^3))
+
+### Graf 
+plot(t, y, type = "l",
+     main = "Odhadnuté trendové křivky",
+     xlab = "Time", ylab = "Balance")
+lines(t, fitted(mod_lin), col = 2, lwd = 2)
+lines(t, fitted(mod_kv),  col = 3, lwd = 2)
+lines(t, fitted(mod_kub), col = 4, lwd = 2)
+legend("topleft",
+       legend = c("Původní řada", "Lineární", "Kvadratický", "Kubický"),
+       col = c(1,2,3,4), lty = 1, lwd = 2, cex = 0.85)
+
+### Srovnání kvality trendů
+cat("Lineární \ Kvadratický \ Kubický: \n")
+cat("R^2:", summary(mod_lin)$r.squared,
+    summary(mod_kv)$r.squared,
+    summary(mod_kub)$r.squared, "\n")
+
+
+cat("AIC:", AIC(mod_lin), AIC(mod_kv), AIC(mod_kub), "\n")
+cat("BIC:", BIC(mod_lin), BIC(mod_kv), BIC(mod_kub), "\n")
+
+# 5) Stejné trendy + sezónní dummy (měsíce)
+mesic <- factor(cycle(rada.ts))  # 12 kategorií
+mod_lin_seas <- lm(y ~ t + mesic)
+mod_kv_seas  <- lm(y ~ t + I(t^2) + mesic)
+mod_kub_seas <- lm(y ~ t + I(t^2) + I(t^3) + mesic)
+
+
+cat("AIC se sezónností:",
+    AIC(mod_lin_seas), AIC(mod_kv_seas), AIC(mod_kub_seas), "\n")
+cat("BIC se sezónností:",
+    BIC(mod_lin_seas), BIC(mod_kv_seas), BIC(mod_kub_seas), "\n")
+
+
+```
+
+Byly vyzkoušeny lineární, kvadratický a kubický trend. Bez sezónnosti měly všechny modely poměrně nízkou vysvětlující schopnost (R² pod 25 %). Po přidání sezónních dummy proměnných se kvalita modelů výrazně zlepšila – AIC kleslo zhruba o 250 bodů. Nejlepší výsledky měl kvadratický a kubický trend se sezónní složkou, přičemž rozdíly mezi nimi byly malé. Lze tedy říci, že **optimálním funkčním zápisem je kvadratický/kubický trend doplněný o sezónní dummy proměnné**.
