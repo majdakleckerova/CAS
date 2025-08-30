@@ -12,6 +12,14 @@ format:
 editor: visual
 ---
 
+# KMA/CAS - Semestrální práce
+
+## Analýza datasetu "Construction - monthly data"
+
+### Marie Kleckerová, Natálie Růtová, Jan Čmuchař
+
+#### LS 2024/2025
+
 ## Načtení knihoven a dat
 
 ```{r}
@@ -21,6 +29,7 @@ library(dplyr)
 library(TTR)       
 library(zoo)
 library(forecast)
+library(lmtest)
 
 k <- get_eurostat("ei_bsbu_m_r2", time_format = "date")
 
@@ -96,6 +105,7 @@ legend("topright",
 ### Vyhlazení pomocí exponenciálního vyrovnání
 
 ```{r}
+rada.sa <- rada.ts - rada.dec$seasonal
 rada.sa.exp     <- HoltWinters(rada.sa, gamma = FALSE) # základní dvojité exponenciální vyrovnání (HW bez sezónní složky)
 # různé hodnoty parametrů alpha a beta
 rada.sa.exp.a01 <- HoltWinters(rada.sa, alpha = 0.01, beta = FALSE, gamma = FALSE)
@@ -142,7 +152,7 @@ Pro odhad trendu byly použity různé varianty **Holt–Wintersova exponenciál
 ## iii. Hledání optimálního modelu pro samotnou řadu (funkční zápis trendu + sezónnost)
 
 ```{r}
-t <- as.numeric(time(rada.ts))   # skutečná časová osa z ts
+ t <- as.numeric(time(rada.ts))   # skutečná časová osa z ts
 y <- as.numeric(rada.ts)         # hodnoty řady
 
 ### Fit trendů (jen v závislosti na t)
@@ -161,23 +171,29 @@ legend("topleft",
        legend = c("Původní řada", "Lineární", "Kvadratický", "Kubický"),
        col = c(1,2,3,4), lty = 1, lwd = 2, cex = 0.85)
 
-### Srovnání kvality trendů
-cat("Lineární \ Kvadratický \ Kubický: \n")
-cat("R^2:", summary(mod_lin)$r.squared,
-    summary(mod_kv)$r.squared,
-    summary(mod_kub)$r.squared, "\n")
+```
 
+Na grafu jsou porovnány **lineární, kvadratický a kubický** trend s původní časovou řadou.
 
-cat("AIC:", AIC(mod_lin), AIC(mod_kv), AIC(mod_kub), "\n")
-cat("BIC:", BIC(mod_lin), BIC(mod_kv), BIC(mod_kub), "\n")
+-   **Lineární trend** (červeně) ukazuje jen postupný růst a nezachycuje obraty.
+-   **Kvadratický a kubický trend** (zeleně, modře) lépe vystihují pokles kolem roku 2000 a následný růst po roce 2010.
+-   Celkově je vidět, že **polynomy vyššího řádu vystihují vývoj lépe než čistě lineární trend**.
 
-# 5) Stejné trendy + sezónní dummy (měsíce)
+```{r}
+### Stejné trendy + sezónní dummy (měsíce)
 mesic <- factor(cycle(rada.ts))  # 12 kategorií
 mod_lin_seas <- lm(y ~ t + mesic)
 mod_kv_seas  <- lm(y ~ t + I(t^2) + mesic)
 mod_kub_seas <- lm(y ~ t + I(t^2) + I(t^3) + mesic)
 
 
+### Srovnání kvality trendů
+cat("Lineární \ Kvadratický \ Kubický: \n")
+cat("R^2:", summary(mod_lin)$r.squared,
+    summary(mod_kv)$r.squared,
+    summary(mod_kub)$r.squared, "\n")
+cat("AIC:", AIC(mod_lin), AIC(mod_kv), AIC(mod_kub), "\n")
+cat("BIC:", BIC(mod_lin), BIC(mod_kv), BIC(mod_kub), "\n")
 cat("AIC se sezónností:",
     AIC(mod_lin_seas), AIC(mod_kv_seas), AIC(mod_kub_seas), "\n")
 cat("BIC se sezónností:",
@@ -187,3 +203,114 @@ cat("BIC se sezónností:",
 ```
 
 Byly vyzkoušeny lineární, kvadratický a kubický trend. Bez sezónnosti měly všechny modely poměrně nízkou vysvětlující schopnost (R² pod 25 %). Po přidání sezónních dummy proměnných se kvalita modelů výrazně zlepšila – AIC kleslo zhruba o 250 bodů. Nejlepší výsledky měl kvadratický a kubický trend se sezónní složkou, přičemž rozdíly mezi nimi byly malé. Lze tedy říci, že **optimálním funkčním zápisem je kvadratický/kubický trend doplněný o sezónní dummy proměnné**.
+
+## iv. Hledání optimálního modelu typu SARIMA
+
+```{r}
+## Hledání optimálního modelu typu SARIMA (měsíční data, perioda 12)
+
+### ACF/PACF původní řady
+par(mfrow = c(2,1))
+acf(rada.ts,  na.action = na.pass, main = "ACF – původní řada")
+pacf(rada.ts, na.action = na.pass, main = "PACF – původní řada")
+par(mfrow = c(1,1))
+
+rada.sdiff <- diff(rada.ts, lag = 12)                 # D=1
+par(mfrow = c(2,1))
+acf(rada.sdiff,  na.action = na.pass, main = "ACF – sezónní diference (D=1)")
+pacf(rada.sdiff, na.action = na.pass, main = "PACF – sezónní diference (D=1)")
+par(mfrow = c(1,1))
+rada.dd <- diff(rada.ts, differences = 1)             # d=1
+rada.ddsd <- diff(rada.dd, lag = 12)                  # d=1, D=1
+# acf(rada.ddsd); pacf(rada.ddsd)
+
+
+fit1 <- Arima(rada.ts, order = c(0,0,0), seasonal = list(order = c(1,1,1), period = 12))
+fit2 <- Arima(rada.ts, order = c(1,0,0), seasonal = list(order = c(1,1,1), period = 12))
+fit3 <- Arima(rada.ts, order = c(0,0,1), seasonal = list(order = c(1,1,1), period = 12))
+fit4 <- Arima(rada.ts, order = c(1,0,1), seasonal = list(order = c(1,1,1), period = 12))
+fit5 <- Arima(rada.ts, order = c(2,0,0), seasonal = list(order = c(1,1,1), period = 12))
+fit6 <- Arima(rada.ts, order = c(0,0,2), seasonal = list(order = c(1,1,1), period = 12))
+fit7 <- Arima(rada.ts, order = c(0,1,1), seasonal = list(order = c(1,1,1), period = 12))
+fit8 <- Arima(rada.ts, order = c(1,1,1), seasonal = list(order = c(1,1,1), period = 12))
+
+fit.auto.aic <- auto.arima(rada.ts, seasonal = TRUE)            # default AIC
+fit.auto.bic <- auto.arima(rada.ts, seasonal = TRUE, ic = "bic")
+
+### Srovnání podle AIC, BIC
+mods <- list(
+  "SARIMA(0,0,0)x(1,1,1)[12]" = fit1,
+  "SARIMA(1,0,0)x(1,1,1)[12]" = fit2,
+  "SARIMA(0,0,1)x(1,1,1)[12]" = fit3,
+  "SARIMA(1,0,1)x(1,1,1)[12]" = fit4,
+  "SARIMA(2,0,0)x(1,1,1)[12]" = fit5,
+  "SARIMA(0,0,2)x(1,1,1)[12]" = fit6,
+  "SARIMA(0,1,1)x(1,1,1)[12]" = fit7,
+  "SARIMA(1,1,1)x(1,1,1)[12]" = fit8,
+  "auto.arima (AIC)"           = fit.auto.aic,
+  "auto.arima (BIC)"           = fit.auto.bic)
+
+crit <- data.frame(
+  model = names(mods),
+  AIC   = sapply(mods, AIC),
+  BIC   = sapply(mods, BIC),
+  logLik= sapply(mods, logLik))
+crit <- crit[order(crit$BIC), ]   # seřadíme typicky podle BIC
+print(crit, row.names = FALSE)
+
+### Diagnostika residuí nejlepšího modelu 
+best <- fit7   
+coeftest(best)         # významnost koeficientů
+par(mfrow = c(2,1))
+acf(residuals(best),  na.action = na.pass, main = "ACF residuí – vybraný model")
+pacf(residuals(best), na.action = na.pass, main = "PACF residuí – vybraný model")
+par(mfrow = c(1,1))
+Box.test(residuals(best), lag = 24, type = "Ljung-Box")  # test nezávislosti
+
+### Grafické zobrazení optimálního modelu
+plot(rada.ts, main = "Původní řada + fit optimálního SARIMA modelu", ylab = "Balance")
+lines(fitted(best), col = "deeppink2")
+legend("topleft", c("Původní řada","SARIMA(0,1,1)x(1,1,1)[12]"), col = c(1,2), lty = 1, bty = "n")
+
+### Predikce
+pred <- forecast(best, h = 10)
+plot(pred, main = "10-kroková predikce z vybraného SARIMA modelu")
+
+
+```
+
+Pro nalezení optimálního SARIMA modelu jsme postupovali standardně:
+
+-   **Diagnostika řady (ACF, PACF):** Na původní časové řadě bylo jasně patrné **sezónní chování s periodou 12 měsíců**. Proto jsme zkusili **sezónní diferenci (D=1)**, která odstranila sezónní složku a stabilizovala řadu. Tento krok je nutný, protože SARIMA modely předpokládají stacionaritu.
+
+-   **Ruční odhady kandidátních modelů:** Následně jsme testovali několik základních modelů typu **SARIMA(p,d,q)×(P,D,Q)\[12\]**, konkrétně s různými kombinacemi AR a MA složek (např. (1,0,0)×(1,1,1), (0,1,1)×(1,1,1), (2,0,0)×(1,1,1), atd.). U každého modelu jsme sledovali **AIC a BIC kritéria**.
+
+-   **Automatická volba (auto.arima):** Pro porovnání jsme použili i funkci `auto.arima`, a to s kritériem AIC i BIC.
+
+    **Výsledky porovnání:**
+
+-   Nejnižší hodnotu BIC dosáhl model **SARIMA(0,1,1)×(1,1,1)\[12\]**, velmi blízko následovaný modelem **SARIMA(1,0,0)×(1,1,1)\[12\]**. Rozdíly byly malé, ale z hlediska toho, že volíme co nejjednodušší model s dobrým fitováním, považujeme za vhodnější **SARIMA(0,1,1)×(1,1,1)\[12\]**.
+
+-   **Diagnostika residuí:** Vybraný model jsme ověřili pomocí **ACF/PACF residuí** a **Ljung–Box testu**. Grafy residuí nevykazovaly systematické závislosti, avšak Ljung–Box test na 24 zpoždění ukázal signifikantní hodnotu (slabá zbytková autokorelace). Při testu na kratší sezónní lag (12) však výsledek vycházel přijatelně.
+
+I když test residuí naznačuje slabou autokorelaci při delším zpoždění, preferujeme tento model jako **nejlepší kompromis mezi jednoduchostí a kvalitou fitu**.
+
+# TOHLE JEŠTĚ NENI:
+
+## v. Hledání závislostí na jiných řadách (identifikace řad, které mohou mít vliv pomocí kroskorelační funkce + nalezení zpoždění závislosti)
+
+```{r}
+
+```
+
+## vi. Hledání optimálního modelu kombinujícího závislost na ostatních řadách a řešení autokorelace
+
+```{r}
+
+```
+
+### iii., iv., vi. : Kontrola předpokladů regresních modelů (nezávislost reziduí přes autokorelační funkci)
+
+### vii. Predikce 10 budoucích pozorování u vhodných modelů (vykreslení predikcí i s intervaly spolehlivosti, komentář)
+
+## viii. Porovnání modelů, závěr
